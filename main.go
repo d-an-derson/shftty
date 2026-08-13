@@ -98,7 +98,7 @@ func (t *Terminal) Resize(newCols, newRows int) {
 		t.Grid = t.MainGrid
 	}
 
-	if t.CursorY >= t.Cols {
+	if t.CursorX >= t.Cols {
 		t.CursorX = t.Cols - 1
 	}
 	if t.CursorY >= t.Rows {
@@ -137,7 +137,12 @@ func main() {
 	w := a.NewWindow("shfte")
 
 	ui := widget.NewTextGrid() // Create a new TextGrid
-	term := Terminal{ CursorX: 0, CursorY: 0}
+	term := &Terminal{ 
+		CursorX: 0, 
+		CursorY: 0,
+	}
+
+	term.Resize(80, 24)
 
 	// Start pty
 	os.Setenv("TERM", "xterm-256color")
@@ -358,7 +363,9 @@ func main() {
 							n := getCSIParam(csiParams, 0)
 							// TODO: refactor to switch?
 							if n == 0 {
-								for x := term.CursorX; x < term.Cols; x++ { term.Grid[term.CursorY][x] = widget.TextGridCell{Rune: ' '} }
+								for x := term.CursorX; x < term.Cols; x++ { 
+									term.Grid[term.CursorY][x] = widget.TextGridCell{Rune: ' '} 
+								}
 								for y := term.CursorY + 1; y < term.Rows; y++ {
 									for x := range term.Cols { term.Grid[y][x] = widget.TextGridCell{Rune: ' '} }
 								}
@@ -375,7 +382,9 @@ func main() {
 										term.Grid[term.CursorY][x] = widget.TextGridCell{Rune: ' '}
 									}
 								case 2:
-									for x := range term.Cols { term.Grid[term.CursorY][x] = widget.TextGridCell{Rune: ' '} }
+									for x := 0; x < term.Cols; x++ { 
+										term.Grid[term.CursorY][x] = widget.TextGridCell{Rune: ' '} 
+									}
 							}
 					}
 					inCSI = false
@@ -431,10 +440,10 @@ func main() {
 
 			term.mu.Lock()
 
-			for y := range term.Rows {
+			for y := 0; y < term.Rows; y++ {
 				rowCells := make([]widget.TextGridCell, term.Cols)
 
-				for x := range term.Cols {
+				for x := 0; x < term.Cols; x++ {
 					rowCells[x] = term.Grid[y][x]
 				}
 
