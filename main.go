@@ -11,14 +11,31 @@ import (
 	"sync"
 	"time"
 
+	// fyne dependencies
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
+	"fyne.io/fyne/v2/theme"
+
 	"github.com/creack/pty"
 )
 
 
+// Theme struct and interfaces
+type fontTheme struct {
+	fyne.Theme
+	font fyne.Resource
+}
+
+func (t *fontTheme) Font(style fyne.TextStyle) fyne.Resource {
+	if style.Monospace {
+		return t.font
+	}
+
+	// Fall back to default Fyne theme for ui components
+	return t.Theme.Font(style)
+}
 
 // TODO: Implement terminal layout for dynamic sizing
 type termLayout struct {
@@ -131,9 +148,22 @@ func getCSICoords(params string) (int, int) {
 	return row, col
 }
 
-// --- Main ---
+// =====================
+// ------- Main --------
 func main() {
 	a := app.New()
+
+	fontRes, err := fyne.LoadResourceFromPath("./fonts/FiraCodeNerdFont-Regular.ttf")
+	if err != nil {
+		fyne.LogError("Failed to load Nerd Font", err)
+		os.Exit(1)
+	}
+
+	a.Settings().SetTheme(&fontTheme{
+		Theme: theme.DefaultTheme(),
+		font: fontRes,
+	})
+
 	w := a.NewWindow("shfte")
 
 	ui := widget.NewTextGrid() // Create a new TextGrid
@@ -142,12 +172,15 @@ func main() {
 		CursorY: 0,
 	}
 
-	term.Resize(80, 24)
+	term.Resize(120, 44)
 
 	// Start pty
 	os.Setenv("TERM", "xterm-256color")
 	c := exec.Command("/bin/zsh")
-	p, err := pty.Start(c)
+	p, err := pty.StartWithSize(c, &pty.Winsize{
+		Rows: uint16(44),
+		Cols: uint16(120),
+	})
 
 	if err != nil {
 		fyne.LogError("Failed to open pty", err)
@@ -158,6 +191,10 @@ func main() {
 
 	charSize := widget.NewTextGridFromString("X").MinSize()
 
+	// debounce resize timer
+	var resizeTimer *time.Timer
+	var resizeMu sync.Mutex
+
 	tl := &termLayout{
 		onResize: func(s fyne.Size) {
 			if charSize.Width <= 0 || charSize.Height <= 0 {
@@ -167,15 +204,27 @@ func main() {
 			newCols := int(s.Width / charSize.Width)
 			newRows := int(s.Height / charSize.Height)
 
-			if newCols < 1 { newCols = 1 }
-			if newRows < 1 { newRows = 1 }
+			// Debounce logic
+			resizeMu.Lock()
 
-			term.Resize(newCols, newRows)
+			if resizeTimer != nil {
+				resizeTimer.Stop()
+			}
 
-			_ = pty.Setsize(p, &pty.Winsize{
-				Rows: uint16(newRows),
-				Cols: uint16(newCols),
+			resizeTimer = time.AfterFunc(50*time.Millisecond, func() {
+				if newCols == term.Cols && newRows == term.Rows {
+					return
+				}
+
+				term.Resize(newCols, newRows)
+
+				_ = pty.Setsize(p, &pty.Winsize{
+					Rows: uint16(newRows),
+					Cols: uint16(newCols),
+				})
 			})
+
+			resizeMu.Unlock()
 		},
 	}
 
@@ -236,6 +285,16 @@ func main() {
 
 			term.mu.Lock()
 
+			// Escape Intercept
+			if r == '\x1b' {
+				inEscape = true
+				inCSI = false
+				inOSC = false
+				isPrivate = false
+				term.mu.Unlock()
+				continue
+			}
+
 			// OSC Parser
 			if inOSC {
 				if r == '\a' || r == '\x07' || r == '\x1b' {
@@ -245,12 +304,7 @@ func main() {
 				continue
 			}
 
-			// --- ANSI ESCAPE PARSER ---
-			if r == '\x1b' {
-				inEscape = true
-				term.mu.Unlock()
-				continue
-			}
+			// --- ANSI Router
 			if inEscape {
 				if r == '[' {
 					inCSI = true
@@ -266,7 +320,11 @@ func main() {
 					continue
 				}
 				inEscape = false // Unsupported escape, abort
+				term.mu.Unlock()
+				continue
 			}
+
+			// CSI Parser
 			if inCSI {
 				// catch DEC private mode
 				if r == '?' {
