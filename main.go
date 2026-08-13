@@ -40,12 +40,17 @@ func (l *termLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 
 // Terminal struct and interfaces
 type Terminal struct {
-	Grid    [][]widget.TextGridCell
-	Cols    int
-	Rows    int
-	CursorX int
-	CursorY int
-	mu      sync.Mutex
+	Grid     [][]widget.TextGridCell
+	MainGrid [][]widget.TextGridCell
+	AltGrid  [][]widget.TextGridCell
+	Cols     int
+	Rows     int
+	CursorX  int
+	CursorY  int
+	SavedX   int
+	SavedY   int
+	IsAlt    bool
+	mu       sync.Mutex
 }
 
 func (t *Terminal) Scroll() {
@@ -66,21 +71,32 @@ func (t *Terminal) Resize(newCols, newRows int) {
 		return
 	}
 
-	newGrid := make([][]widget.TextGridCell, newRows)
+	newMain := make([][]widget.TextGridCell, newRows)
+	newAlt := make([][]widget.TextGridCell, newRows)
 	for y := range newRows {
-		newGrid[y] = make([]widget.TextGridCell, newCols)
+		newMain[y] = make([]widget.TextGridCell, newCols)
+		newAlt[y] = make([]widget.TextGridCell, newCols)
 		for x := range newCols {
 			if y < t.Rows && x < t.Cols {
-				newGrid[y][x] = t.Grid[y][x]
+				if t.MainGrid != nil { newMain[y][x] = t.MainGrid[y][x] }
+				if t.AltGrid != nil { newAlt[y][x] = t.AltGrid[y][x] }
 			} else {
-				newGrid[y][x] = widget.TextGridCell{Rune: ' '}
+				newMain[y][x] = widget.TextGridCell{Rune: ' '}
+				newAlt[y][x] = widget.TextGridCell{Rune: ' '}
 			}
 		}
 	}
 
-	t.Grid = newGrid
+	t.MainGrid = newMain
+	t.AltGrid = newAlt
 	t.Cols = newCols
 	t.Rows = newRows
+
+	if t.IsAlt {
+		t.Grid = t.AltGrid
+	} else {
+		t.Grid = t.MainGrid
+	}
 
 	if t.CursorY >= t.Cols {
 		t.CursorX = t.Cols - 1
@@ -175,7 +191,6 @@ func main() {
 	w.Canvas().SetOnTypedKey(onTypedKey)
 	w.Canvas().SetOnTypedRune(onTypedRune)
 
-	var mu sync.Mutex
 	// Instead of runes, we now store TextGridCells which hold a rune AND a style
 	reader := bufio.NewReader(p)
 
@@ -199,6 +214,7 @@ func main() {
 		inEscape := false // Are we currently parsing an escape sequence?
 		inCSI := false    // Are we in a Control Sequence Introducer (CSI)?
 		csiParams := ""   // The numbers inside the sequence (e.g., "31;1")
+		isPrivate := false // DEC Private mode
 
 
 		for {
@@ -212,12 +228,12 @@ func main() {
 				os.Exit(0)
 			}
 
-			mu.Lock()
+			term.mu.Lock()
 
 			// --- ANSI ESCAPE PARSER ---
 			if r == '\x1b' {
 				inEscape = true
-				mu.Unlock()
+				term.mu.Unlock()
 				continue
 			}
 			if inEscape {
@@ -225,21 +241,61 @@ func main() {
 					inCSI = true
 					inEscape = false
 					csiParams = ""
-					mu.Unlock()
+					term.mu.Unlock()
 					continue
 				}
 				inEscape = false // Unsupported escape, abort
 			}
 			if inCSI {
+				// catch DEC private mode
+				if r == '?' {
+					isPrivate = true
+					term.mu.Unlock()
+					continue
+				}
 				// If it's a number or semicolon, add it to our parameters
 				if (r >= '0' && r <= '9') || r == ';' {
 					csiParams += string(r)
-					mu.Unlock()
+					term.mu.Unlock()
 					continue
 				}
 
 				// Any other letter terminates the CSI sequence (cursor moves, clears, etc.)
 				if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+
+					// Private Mode Commands
+					if isPrivate {
+						switch r {
+						case 'h': // Set mode
+							if getCSIParam(csiParams, 0) == 1049 {
+								// save cursor position
+								term.SavedX, term.SavedY = term.CursorX, term.CursorY
+								// switch to alt grid
+								term.IsAlt = true
+								term.Grid = term.AltGrid
+								// clear alt grid
+								for y := 0; y < term.Rows; y++ {
+									for x := 0; x < term.Cols; x++ {
+										term.Grid[y][x] = widget.TextGridCell{Rune: ' '}
+									}
+								}
+								term.CursorX, term.CursorY = 0, 0
+							}
+						case 'l': // Reset mode
+							if getCSIParam(csiParams, 0) == 1049 {
+								term.IsAlt = false
+								term.Grid = term.MainGrid
+								term.CursorX, term.CursorY = term.SavedX, term.SavedY
+							}
+						}
+
+						inCSI = false
+						isPrivate = false
+						term.mu.Unlock()
+						continue
+					}
+
+					// Standard commands
 					switch r {
 						case 'm':
 							codes := strings.Split(csiParams, ";")
@@ -323,7 +379,7 @@ func main() {
 							}
 					}
 					inCSI = false
-					mu.Unlock()
+					term.mu.Unlock()
 					continue
 				}
 			}
@@ -362,7 +418,7 @@ func main() {
 				term.CursorX++
 			}
 
-			mu.Unlock()
+			term.mu.Unlock()
 		}
 	}()
 
