@@ -220,6 +220,7 @@ func main() {
 		inCSI := false    // Are we in a Control Sequence Introducer (CSI)?
 		csiParams := ""   // The numbers inside the sequence (e.g., "31;1")
 		isPrivate := false // DEC Private mode
+		inOSC := false   // Operating sequence command(OSC) flag
 
 
 		for {
@@ -235,6 +236,15 @@ func main() {
 
 			term.mu.Lock()
 
+			// OSC Parser
+			if inOSC {
+				if r == '\a' || r == '\x07' || r == '\x1b' {
+					inOSC = false
+				}
+				term.mu.Unlock()
+				continue
+			}
+
 			// --- ANSI ESCAPE PARSER ---
 			if r == '\x1b' {
 				inEscape = true
@@ -246,6 +256,12 @@ func main() {
 					inCSI = true
 					inEscape = false
 					csiParams = ""
+					term.mu.Unlock()
+					continue
+				}
+				if r == ']' {
+					inOSC = true
+					inEscape = false
 					term.mu.Unlock()
 					continue
 				}
@@ -392,7 +408,6 @@ func main() {
 					continue
 				}
 			}
-			// --- END ANSI PARSER ---
 
 			// --- Grid Write Logic ---
 			// TODO: refactor to switch
@@ -461,8 +476,10 @@ func main() {
 		}
 	}()
 
+	// Create display container
 	t := container.New(tl, ui)
 
+	// Set window content & run app
 	w.SetContent(t)
 	w.Resize(fyne.NewSize(1200, 800))
 	w.ShowAndRun()
