@@ -1,0 +1,6 @@
+[Details]
+ID = "shfte"
+Name = "Shitty fucking terminal emulator"
+
+[Migrations]
+fyneDo = true
