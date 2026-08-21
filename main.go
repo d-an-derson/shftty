@@ -16,6 +16,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/driver/desktop"
 
 	"github.com/creack/pty"
 )
@@ -54,15 +55,6 @@ func (l *termLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	return fyne.NewSize(200, 200)
 }
 
-func (t *Terminal) Scroll() {
-	for y := 1; y < t.Rows; y++ {
-		t.Grid[y-1] = t.Grid[y]
-	}
-	t.Grid[t.Rows-1] = make([]widget.TextGridCell, t.Cols)
-	for x := range t.Cols {
-		t.Grid[t.Rows-1][x] = widget.TextGridCell{Rune: ' '}
-	}
-}
 
 // CSI sequence helper functions
 func getCSIParam(params string, defaultVal int) int {
@@ -113,11 +105,20 @@ func main() {
 	}
 
 	ui := widget.NewTextGrid() // Create a new TextGrid
+
+	// init terminal struct
 	term := &Terminal{ 
 		CursorX: 0, 
 		CursorY: 0,
 		defaultStyle: defaultStyle,
 		currentStyle: defaultStyle,
+		CursorHidden: false,
+		MarginTop: 0,
+		MarginBottom: 0,
+		CursorStyle: &widget.CustomTextGridStyle{
+			FGColor: color.RGBA{128,128,128,1},
+			BGColor: color.White,
+		},
 	}
 
 	term.Resize(120, 44)
@@ -178,11 +179,36 @@ func main() {
 
 	// Callback function that handles special keypresses
 	onTypedKey := func(e *fyne.KeyEvent) {
-		if e.Name == fyne.KeyEnter || e.Name == fyne.KeyReturn {
-			_, _ = p.Write([]byte{'\r'})
-		} else if e.Name == fyne.KeyBackspace {
-			_, _ = p.Write([]byte{'\x7f'})
-		}
+		switch e.Name {
+				case fyne.KeyEnter, fyne.KeyReturn:
+					_, _ = p.Write([]byte{'\r'})
+				case fyne.KeyBackspace:
+					_, _ = p.Write([]byte{'\x7f'})
+				case fyne.KeyTab:
+					_, _ = p.Write([]byte{'\t'})
+				case fyne.KeyEscape:
+					_, _ = p.Write([]byte{'\x1b'})
+					
+				// Arrow keys
+				case fyne.KeyUp:
+					_, _ = p.Write([]byte("\x1b[A"))
+				case fyne.KeyDown:
+					_, _ = p.Write([]byte("\x1b[B"))
+				case fyne.KeyRight:
+					_, _ = p.Write([]byte("\x1b[C"))
+				case fyne.KeyLeft:
+					_, _ = p.Write([]byte("\x1b[D"))
+					
+				// Navigation keys
+				case fyne.KeyHome:
+					_, _ = p.Write([]byte("\x1b[H"))
+				case fyne.KeyEnd:
+					_, _ = p.Write([]byte("\x1b[F"))
+				case fyne.KeyPageUp:
+					_, _ = p.Write([]byte("\x1b[5~"))
+				case fyne.KeyPageDown:
+					_, _ = p.Write([]byte("\x1b[6~"))
+				}
 	}
 
 	// Callback function that handles character keypresses
@@ -193,24 +219,49 @@ func main() {
 	w.Canvas().SetOnTypedKey(onTypedKey)
 	w.Canvas().SetOnTypedRune(onTypedRune)
 
-	// Instead of runes, we now store TextGridCells which hold a rune AND a style
+	// Register Crtl + Key shortcuts and write them to pty
+	// TODO: Implement Crtl + A-Z shortcuts
+	w.Canvas().AddShortcut(&desktop.CustomShortcut{
+		KeyName:  fyne.KeyA,
+		Modifier: fyne.KeyModifierControl,
+	}, func(shortcut fyne.Shortcut) {
+		// Ctrl+A is byte value 1
+		_, _ = p.Write([]byte{'\x01'})
+	})
+
+	w.Canvas().AddShortcut(&desktop.CustomShortcut{
+		KeyName:  fyne.KeyB, 
+		Modifier: fyne.KeyModifierControl,
+	}, func(shortcut fyne.Shortcut) {
+		// Ctrl+B is byte value 2
+		_, _ = p.Write([]byte{'\x02'})
+	})
+
+	w.Canvas().AddShortcut(&desktop.CustomShortcut{
+		KeyName:  fyne.KeyC, // Ctrl+C
+		Modifier: fyne.KeyModifierControl,
+	}, func(shortcut fyne.Shortcut) {
+		// Ctrl+C is byte value 3
+		_, _ = p.Write([]byte{'\x03'})
+	})
+
+	w.Canvas().AddShortcut(&desktop.CustomShortcut{
+		KeyName:  fyne.KeyD, // Crtl+D (EOF)
+		Modifier: fyne.KeyModifierControl,
+	}, func(shortcut fyne.Shortcut) {
+		// Ctrl+D is byte value 4
+		_, _ = p.Write([]byte{'\x04'})
+	})
+
+	// buf reader for pty stream
 	reader := bufio.NewReader(p)
 
-	// grid styles
-	// TODO: figure out cursor styling
-
-	// cursorStyle := &widget.CustomTextGridStyle{
-	// 	FGColor: color.White,
-	// 	BGColor: color.Opaque,
-	// }
-
-
-	// Goroutine that reads from pty and parses ANSI
+	// Read & parse pty loop
 	go func() {
-		term.ReadPTY(reader)
+		term.ReadPTY(reader, p)
 	}()
 
-	// Goroutine that renders to UI
+	// Render loop
 	go func() {
 		for {
 			time.Sleep(16 * time.Millisecond)
@@ -229,7 +280,22 @@ func main() {
 				gridRows = append(gridRows, widget.TextGridRow{Cells: rowCells})
 			}
 
-			// term.Grid[term.CursorY][term.CursorX] = widget.TextGridCell{Rune: ' ', Style: cursorStyle}
+			// get cursor x,y and render cursor style 
+			if term.CursorHidden == false && term.CursorY >= 0 && term.CursorY < len(gridRows) {
+				if term.CursorX >= 0 && term.CursorX < term.Cols {
+					// get rune at cursor x,y
+					targetCell := gridRows[term.CursorY].Cells[term.CursorX]
+
+					// default to space if cell is empty
+					if targetCell.Rune == 0 {
+						targetCell.Rune = ' '
+					}
+
+					targetCell.Style = term.CursorStyle
+					gridRows[term.CursorY].Cells[term.CursorX] = targetCell
+				}
+			}
+
 			term.mu.Unlock()
 
 			fyne.Do(func() {
