@@ -37,6 +37,7 @@ type Terminal struct {
 	inCSI        bool
 	isPrivate    bool
 	inOSC        bool
+	inCharset    bool
 	defaultStyle *widget.CustomTextGridStyle
 	currentStyle *widget.CustomTextGridStyle
   CursorStyle  *widget.CustomTextGridStyle
@@ -142,6 +143,7 @@ func (term *Terminal) ClearScreen() {
 // Read PTY stream and process commands
 func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 	csiParams := "" // The numbers inside the sequence cmd "31;1"
+	oscParams := "" // The numbers inside the osc sequence cmd
 
 	for {
 		r, _, err := reader.ReadRune()
@@ -158,34 +160,73 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 
 		// Escape Intercept
 		if r == '\x1b' {
+
+			// check if we have a buffered osc response
+			if term.inOSC && (oscParams == "11;?" || strings.HasPrefix(oscParams, "11;?")) {
+				// background color requested
+				response := "\x1b]11;rgb:0000/0000/0000\a"
+				_, err := p.WriteString(response)
+				if err != nil {
+					fyne.LogError("Failed to write OSC 11 response", err)
+				}
+			}
+
 			term.inEscape = true
 			term.inCSI = false
 			term.inOSC = false
 			term.isPrivate = false
+			term.inCharset = false
 			term.mu.Unlock()
 			continue
 		}
 
 		// OSC Parser
 		if term.inOSC {
-			if r == '\a' || r == '\x07' || r == '\x1b' {
+			if r == '\a' || r == '\x07' {
 				term.inOSC = false
+
+				// background color requested
+				if oscParams == "11;?" || strings.HasPrefix(oscParams, "11;?") {
+					response := "\x1b]11;rgb:0000/0000/0000\x1b\\"
+					_, err := p.WriteString(response)
+					if err != nil {
+						fyne.LogError("Failed to write OSC 11 response", err)
+					}
+				}
+			} else {
+				// loop until '\a' / '\x07' or '\x1b'
+				oscParams += string(r)
 			}
 			term.mu.Unlock()
 			continue
 		}
 
-		// --- ANSI Router
+		// Charset Parser
+		if term.inCharset {
+			// ignore next character ie: 'B' or '0'
+			term.inCharset = false
+			term.mu.Unlock()
+			continue
+		}
+
+		// ANSI Router
 		if term.inEscape {
 			if r == '[' {
 				term.inCSI = true
 				term.inEscape = false
-				csiParams = ""
+				csiParams = "" // clear csiParams
 				term.mu.Unlock()
 				continue
 			}
 			if r == ']' {
 				term.inOSC = true
+				term.inEscape = false
+				oscParams = "" // clear oscParams
+				term.mu.Unlock()
+				continue
+			}
+			if r == '(' || r == ')' || r == '*' || r == '+' {
+				term.inCharset = true
 				term.inEscape = false
 				term.mu.Unlock()
 				continue
@@ -242,8 +283,16 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 							}
 							term.CursorX, term.CursorY = 0, 0
 						} else if param == 25 {
-							// TODO: show cursor logic
 							term.CursorHidden = false
+						}
+					case 'c': // Device Attributes Request
+						if strings.HasPrefix(csiParams, ">") {
+							// mimic xterm
+							// TODO: figure out what this means
+							_, _ = p.WriteString("\x1b[>0;276;0c]")
+						} else {
+							// Primary DA: Mimic VT102
+							_, _ = p.WriteString("\x1b[?6c")
 						}
 					case 'l': // Reset mode
 						param := getCSIParam(csiParams, 0)
@@ -258,7 +307,6 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 							term.currentStyle = term.defaultStyle
 							term.CursorHidden = false
 						} else if param == 25 {
-							// TODO: hide cursor logic
 							term.CursorHidden = true
 						}
 					}
@@ -405,8 +453,11 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 							term.Grid[y][x] = widget.TextGridCell{Rune: ' ', Style: term.currentStyle}
 						}
 					}
-				case 'n': // Cursor Position Report (CSR)
-					if getCSIParam(csiParams, 0) == 6 {
+				case 'n':
+					// Cursor Position Report (CSR)
+					param := getCSIParam(csiParams, 0) 
+
+					if param == 6 {
 						row := term.CursorY + 1
 						col := term.CursorX + 1
 
@@ -414,7 +465,12 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 
 						_, err := p.WriteString(response)
 						if err != nil {
-							fyne.LogError("Failed to write DSR back to PTY", err)
+							fyne.LogError("Failed to write CSR back to PTY", err)
+						}
+					} else if param == 5 {
+						_, err := p.WriteString("\x1b[0n")
+						if err != nil {
+							fyne.LogError("Failed to write DSR", err)
 						}
 					}
 				case 'P': // delete n chars from line
@@ -470,7 +526,6 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 			}
 
 			term.Grid[term.CursorY][term.CursorX] = widget.TextGridCell{Rune: r, Style: term.currentStyle}
-			//if term.CursorX + 1 < term.Cols { term.Grid[term.CursorY][term.CursorX + 1] = widget.TextGridCell{Rune: ' ', Style: cursorStyle} }
 			term.CursorX++
 		}
 

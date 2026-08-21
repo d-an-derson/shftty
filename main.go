@@ -225,7 +225,6 @@ func main() {
 		KeyName:  fyne.KeyA,
 		Modifier: fyne.KeyModifierControl,
 	}, func(shortcut fyne.Shortcut) {
-		// Ctrl+A is byte value 1
 		_, _ = p.Write([]byte{'\x01'})
 	})
 
@@ -233,7 +232,6 @@ func main() {
 		KeyName:  fyne.KeyB, 
 		Modifier: fyne.KeyModifierControl,
 	}, func(shortcut fyne.Shortcut) {
-		// Ctrl+B is byte value 2
 		_, _ = p.Write([]byte{'\x02'})
 	})
 
@@ -241,7 +239,6 @@ func main() {
 		KeyName:  fyne.KeyC, // Ctrl+C
 		Modifier: fyne.KeyModifierControl,
 	}, func(shortcut fyne.Shortcut) {
-		// Ctrl+C is byte value 3
 		_, _ = p.Write([]byte{'\x03'})
 	})
 
