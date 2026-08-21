@@ -18,6 +18,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/driver/desktop"
 
+	// TODO: Reimplement this package
 	"github.com/creack/pty"
 )
 
@@ -137,6 +138,7 @@ func main() {
 	}
 
 	defer c.Process.Kill()
+
 
 	charSize := widget.NewTextGridFromString("X").MinSize()
 
@@ -259,22 +261,35 @@ func main() {
 	}()
 
 	// Render loop
+	// TODO: need to add an isDirty catch to skip redrawing valid screens
+	// TODO: avoid re-allocating uiRows constantly
+
+	gridRows := make([]widget.TextGridRow, 0)
+
 	go func() {
 		for {
 			time.Sleep(16 * time.Millisecond)
 
-			var gridRows []widget.TextGridRow
-
 			term.mu.Lock()
 
-			for y := 0; y < term.Rows; y++ {
-				rowCells := make([]widget.TextGridCell, term.Cols)
+			if !term.isDirty {
+				term.mu.Unlock()
+				continue
+			}
 
-				for x := 0; x < term.Cols; x++ {
-					rowCells[x] = term.Grid[y][x]
+			// Resize rows slice if window resized
+			if len(gridRows) != term.Rows || (term.Rows > 0 && len(gridRows[0].Cells) != term.Cols) {
+				gridRows = make([]widget.TextGridRow, term.Rows)
+				for y := 0; y < term.Rows; y++ {
+					gridRows[y].Cells = make([]widget.TextGridCell, term.Cols)
 				}
+			}
 
-				gridRows = append(gridRows, widget.TextGridRow{Cells: rowCells})
+			// mutate cells
+			for y := 0; y < term.Rows; y++ {
+				for x := 0; x < term.Cols; x++ {
+					gridRows[y].Cells[x] = term.Grid[y][x]
+				}
 			}
 
 			// get cursor x,y and render cursor style 
@@ -293,6 +308,8 @@ func main() {
 				}
 			}
 
+			// reset dirty flag
+			term.isDirty = false
 			term.mu.Unlock()
 
 			fyne.Do(func() {

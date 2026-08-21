@@ -38,6 +38,7 @@ type Terminal struct {
 	isPrivate    bool
 	inOSC        bool
 	inCharset    bool
+	isDirty      bool
 	defaultStyle *widget.CustomTextGridStyle
 	currentStyle *widget.CustomTextGridStyle
   CursorStyle  *widget.CustomTextGridStyle
@@ -240,6 +241,7 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 				term.currentStyle = term.defaultStyle
 
 				term.ClearScreen()
+				term.isDirty = true
 			}
 			term.inEscape = false // Unsupported escape, abort
 			term.mu.Unlock()
@@ -282,17 +284,9 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 								}
 							}
 							term.CursorX, term.CursorY = 0, 0
+							term.isDirty = true
 						} else if param == 25 {
 							term.CursorHidden = false
-						}
-					case 'c': // Device Attributes Request
-						if strings.HasPrefix(csiParams, ">") {
-							// mimic xterm
-							// TODO: figure out what this means
-							_, _ = p.WriteString("\x1b[>0;276;0c]")
-						} else {
-							// Primary DA: Mimic VT102
-							_, _ = p.WriteString("\x1b[?6c")
 						}
 					case 'l': // Reset mode
 						param := getCSIParam(csiParams, 0)
@@ -306,13 +300,24 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 
 							term.currentStyle = term.defaultStyle
 							term.CursorHidden = false
+							term.isDirty = true
 						} else if param == 25 {
 							term.CursorHidden = true
+						}
+					case 'c': // Device Attributes Request
+						if strings.HasPrefix(csiParams, ">") {
+							// mimic xterm
+							// TODO: figure out what this means
+							_, _ = p.WriteString("\x1b[>0;276;0c")
+						} else {
+							// Primary DA: Mimic VT102
+							_, _ = p.WriteString("\x1b[?6c")
 						}
 					}
 
 					term.inCSI = false
 					term.isPrivate = false
+					term.isDirty = true
 					term.mu.Unlock()
 					continue
 				}
@@ -491,6 +496,8 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 						term.Grid[term.CursorY][x] = widget.TextGridCell{Rune: ' ', Style: term.currentStyle}
 					}
 				}
+
+				term.isDirty = true
 				term.inCSI = false
 				term.mu.Unlock()
 				continue
@@ -526,6 +533,7 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 			}
 
 			term.Grid[term.CursorY][term.CursorX] = widget.TextGridCell{Rune: r, Style: term.currentStyle}
+			term.isDirty = true
 			term.CursorX++
 		}
 
