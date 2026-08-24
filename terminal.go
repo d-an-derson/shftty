@@ -257,7 +257,7 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 				continue
 			}
 			// If it's a number or semicolon, add it to our parameters
-			if (r >= '0' && r <= '9') || r == ';' {
+			if (r >= '0' && r <= '9') || r == ';' || r == '>' || r == '=' {
 				csiParams += string(r)
 				term.mu.Unlock()
 				continue
@@ -303,15 +303,6 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 							term.isDirty = true
 						} else if param == 25 {
 							term.CursorHidden = true
-						}
-					case 'c': // Device Attributes Request
-						if strings.HasPrefix(csiParams, ">") {
-							// mimic xterm
-							// TODO: figure out what this means
-							_, _ = p.WriteString("\x1b[>0;276;0c")
-						} else {
-							// Primary DA: Mimic VT102
-							_, _ = p.WriteString("\x1b[?6c")
 						}
 					}
 
@@ -494,6 +485,15 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 
 					for x := (term.CursorX - n) + 1; x < term.Cols; x++ {
 						term.Grid[term.CursorY][x] = widget.TextGridCell{Rune: ' ', Style: term.currentStyle}
+					}
+				case 'c': // Device Attributes Request
+					if strings.HasPrefix(csiParams, ">") {
+						// mimic xterm
+						// TODO: figure out what this means
+						_, _ = p.WriteString("\x1b[>0;276;0c")
+					} else {
+						// Primary DA: Mimic VT102
+						_, _ = p.WriteString("\x1b[?6c")
 					}
 				}
 

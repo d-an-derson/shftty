@@ -38,7 +38,6 @@ func (t *fontTheme) Font(style fyne.TextStyle) fyne.Resource {
 	return t.Theme.Font(style)
 }
 
-// TODO: Implement terminal layout for dynamic sizing
 type termLayout struct {
 	onResize func(fyne.Size)
 }
@@ -140,6 +139,7 @@ func main() {
 	defer c.Process.Kill()
 
 
+	// Sus out font width for layout
 	charSize := widget.NewTextGridFromString("X").MinSize()
 
 	// debounce resize timer
