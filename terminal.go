@@ -172,9 +172,9 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 				}
 			}
 
-			term.inEscape = true
-			term.inCSI = false
-			term.inOSC = false
+			term.inEscape = true // escape sequence flag
+			term.inCSI = false // Control Sequence Introducer flag
+			term.inOSC = false // Operating System Command flag
 			term.isPrivate = false
 			term.inCharset = false
 			term.mu.Unlock()

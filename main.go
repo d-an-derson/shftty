@@ -16,7 +16,6 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 	"fyne.io/fyne/v2/theme"
-	"fyne.io/fyne/v2/driver/desktop"
 
 	// TODO: Reimplement this package
 	"github.com/creack/pty"
@@ -221,36 +220,8 @@ func main() {
 	w.Canvas().SetOnTypedKey(onTypedKey)
 	w.Canvas().SetOnTypedRune(onTypedRune)
 
-	// Register Crtl + Key shortcuts and write them to pty
-	// TODO: Implement Crtl + A-Z shortcuts
-	w.Canvas().AddShortcut(&desktop.CustomShortcut{
-		KeyName:  fyne.KeyA,
-		Modifier: fyne.KeyModifierControl,
-	}, func(shortcut fyne.Shortcut) {
-		_, _ = p.Write([]byte{'\x01'})
-	})
 
-	w.Canvas().AddShortcut(&desktop.CustomShortcut{
-		KeyName:  fyne.KeyB, 
-		Modifier: fyne.KeyModifierControl,
-	}, func(shortcut fyne.Shortcut) {
-		_, _ = p.Write([]byte{'\x02'})
-	})
-
-	w.Canvas().AddShortcut(&desktop.CustomShortcut{
-		KeyName:  fyne.KeyC, // Ctrl+C
-		Modifier: fyne.KeyModifierControl,
-	}, func(shortcut fyne.Shortcut) {
-		_, _ = p.Write([]byte{'\x03'})
-	})
-
-	w.Canvas().AddShortcut(&desktop.CustomShortcut{
-		KeyName:  fyne.KeyD, // Crtl+D (EOF)
-		Modifier: fyne.KeyModifierControl,
-	}, func(shortcut fyne.Shortcut) {
-		// Ctrl+D is byte value 4
-		_, _ = p.Write([]byte{'\x04'})
-	})
+	windowShortcuts(w, p)
 
 	// buf reader for pty stream
 	reader := bufio.NewReader(p)
