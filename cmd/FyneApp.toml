@@ -1,6 +1,8 @@
 [Details]
+Icon = "shfte-icon-1024x1024.png"
+Name = "Shftty"
 ID = "shfte"
-Name = "Shitty fucking terminal emulator"
+Build = 4
 
 [Migrations]
 fyneDo = true

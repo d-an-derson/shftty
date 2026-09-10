@@ -85,15 +85,15 @@ func getCSICoords(params string) (int, int) {
 func main() {
 	a := app.New()
 
-	fontRes, err := fyne.LoadResourceFromPath("../fonts/FiraCodeNerdFont-Regular.ttf")
-	if err != nil {
-		fyne.LogError("Failed to load Nerd Font", err)
-		os.Exit(1)
-	}
+	// fontRes, err := fyne.LoadResourceFromPath("../fonts/FiraCodeNerdFont-Regular.ttf")
+	// if err != nil {
+	// 	fyne.LogError("Failed to load Nerd Font", err)
+	// 	os.Exit(1)
+	// }
 
 	a.Settings().SetTheme(&fontTheme{
 		Theme: theme.DefaultTheme(),
-		font: fontRes,
+		font: resourceFiraCodeNerdFontRegularTtf,
 	})
 
 	w := a.NewWindow("shfte")
