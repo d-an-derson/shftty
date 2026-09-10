@@ -1,7 +1,8 @@
 [Details]
 Icon = "shfte-icon-1024x1024.png"
 Name = "Shftty"
-ID = "shfte"
+ID = "com.shftty.app"
+Version = "0.0.1"
 Build = 4
 
 [Migrations]
