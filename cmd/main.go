@@ -96,7 +96,7 @@ func main() {
 		font: resourceFiraCodeNerdFontRegularTtf,
 	})
 
-	w := a.NewWindow("shfte")
+	w := a.NewWindow("shftty")
 
 	defaultStyle := &widget.CustomTextGridStyle{
 		FGColor: color.White,
