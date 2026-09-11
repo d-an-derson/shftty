@@ -5,6 +5,7 @@ go 1.26.3
 require (
 	fyne.io/fyne/v2 v2.8.0
 	github.com/creack/pty v1.1.24
+	github.com/pelletier/go-toml/v2 v2.4.3
 )
 
 require (
