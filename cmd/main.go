@@ -85,12 +85,6 @@ func getCSICoords(params string) (int, int) {
 func main() {
 	a := app.New()
 
-	// fontRes, err := fyne.LoadResourceFromPath("../fonts/FiraCodeNerdFont-Regular.ttf")
-	// if err != nil {
-	// 	fyne.LogError("Failed to load Nerd Font", err)
-	// 	os.Exit(1)
-	// }
-
 	a.Settings().SetTheme(&fontTheme{
 		Theme: theme.DefaultTheme(),
 		font: resourceFiraCodeNerdFontRegularTtf,
@@ -122,9 +116,14 @@ func main() {
 
 	term.Resize(120, 44)
 
+	cfg, err := initConfig()
+	if err != nil {
+		fyne.LogError("Failed to parse config", err)
+	}
+
 	// Start pty
 	os.Setenv("TERM", "xterm-256color")
-	c := exec.Command("/bin/zsh")
+	c := exec.Command(cfg.Shell)
 	p, err := pty.StartWithSize(c, &pty.Winsize{
 		Rows: uint16(44),
 		Cols: uint16(120),
