@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"image/color"
+	// "image/color"
 	"os"
 	"os/exec"
 	"strconv"
@@ -21,6 +21,12 @@ import (
 	"github.com/creack/pty"
 )
 
+type Session struct {
+	Term *Terminal
+	PTY *os.File
+	UI *widget.TextGrid
+	Tab *container.TabItem
+}
 
 // Theme struct and interfaces
 type fontTheme struct {
@@ -54,6 +60,13 @@ func (l *termLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	return fyne.NewSize(200, 200)
 }
 
+func createTab(terminals []*Terminal) (*container.TabItem, []*Terminal) {
+	tab := container.NewTabItem("Tab n", widget.NewTextGrid())
+	term := defaultTerminal()
+	terminals = append(terminals, term)
+
+	return tab, terminals
+}
 
 // CSI sequence helper functions
 func getCSIParam(params string, defaultVal int) int {
@@ -80,6 +93,88 @@ func getCSICoords(params string) (int, int) {
 	return row, col
 }
 
+func createNewSession(title string, shell string) *Session {
+	ui := widget.NewTextGrid()
+	term := defaultTerminal()
+
+	term.Resize(120, 44)
+
+	c := exec.Command(shell)
+	p, _ := pty.StartWithSize(c, &pty.Winsize{Rows: 44, Cols: 120})
+
+	session := &Session{ Term: term, PTY: p, UI: ui }
+
+	reader := bufio.NewReader(p)
+	go term.ReadPTY(reader, p)
+
+	go func() {
+		gridRows := make([]widget.TextGridRow, 0)
+
+		for {
+			time.Sleep(16 * time.Millisecond)
+
+			term.mu.Lock()
+
+			if !term.isDirty || !term.isVisible {
+				term.mu.Unlock()
+				continue
+			}
+
+			// Resize rows slice if window resized
+			if len(gridRows) != term.Rows || (term.Rows > 0 && len(gridRows[0].Cells) != term.Cols) {
+				gridRows = make([]widget.TextGridRow, term.Rows)
+				for y := 0; y < term.Rows; y++ {
+					gridRows[y].Cells = make([]widget.TextGridCell, term.Cols)
+				}
+			}
+
+			// mutate cells
+			for y := 0; y < term.Rows; y++ {
+				for x := 0; x < term.Cols; x++ {
+					cell := term.Grid[y][x]
+
+					if cell.Rune == 0 {
+						cell.Rune = ' '
+					}
+
+					gridRows[y].Cells[x] = cell
+				}
+			}
+
+			// get cursor x,y and render cursor style 
+			if term.CursorHidden == false && term.CursorY >= 0 && term.CursorY < len(gridRows) {
+				if term.CursorX >= 0 && term.CursorX < term.Cols {
+					// get rune at cursor x,y
+					targetCell := gridRows[term.CursorY].Cells[term.CursorX]
+
+					// default to space if cell is empty
+					if targetCell.Rune == 0 {
+						targetCell.Rune = ' '
+					}
+
+					targetCell.Style = term.CursorStyle
+					gridRows[term.CursorY].Cells[term.CursorX] = targetCell
+				}
+			}
+
+			// reset dirty flag
+			term.isDirty = false
+			term.mu.Unlock()
+
+			fyne.Do(func() {
+				// Apply the rows directly to the TextGrid and refresh it
+				ui.Rows = gridRows
+				ui.Refresh()
+			})
+		}
+	}()
+
+	tabItem := container.NewTabItem(title, ui)
+	session.Tab = tabItem
+
+	return session
+}
+
 // =====================
 // ------- Main --------
 func main() {
@@ -90,52 +185,15 @@ func main() {
 		font: resourceFiraCodeNerdFontRegularTtf,
 	})
 
+	var activeSession *Session
+	var allSessions []*Session
+
 	w := a.NewWindow("shftty")
-
-	defaultStyle := &widget.CustomTextGridStyle{
-		FGColor: color.White,
-		BGColor: color.Transparent,
-	}
-
-	ui := widget.NewTextGrid() // Create a new TextGrid
-
-	// init terminal struct
-	term := &Terminal{ 
-		CursorX: 0, 
-		CursorY: 0,
-		defaultStyle: defaultStyle,
-		currentStyle: defaultStyle,
-		CursorHidden: false,
-		MarginTop: 0,
-		MarginBottom: 0,
-		CursorStyle: &widget.CustomTextGridStyle{
-			FGColor: color.RGBA{128,128,128,1},
-			BGColor: color.White,
-		},
-	}
-
-	term.Resize(120, 44)
 
 	cfg, err := initConfig()
 	if err != nil {
 		fyne.LogError("Failed to parse config", err)
 	}
-
-	// Start pty
-	os.Setenv("TERM", "xterm-256color")
-	c := exec.Command(cfg.Shell)
-	p, err := pty.StartWithSize(c, &pty.Winsize{
-		Rows: uint16(44),
-		Cols: uint16(120),
-	})
-
-	if err != nil {
-		fyne.LogError("Failed to open pty", err)
-		os.Exit(1)
-	}
-
-	defer c.Process.Kill()
-
 
 	// Sus out font width for layout
 	charSize := widget.NewTextGridFromString("X").MinSize()
@@ -161,24 +219,53 @@ func main() {
 			}
 
 			resizeTimer = time.AfterFunc(50*time.Millisecond, func() {
-				if newCols == term.Cols && newRows == term.Rows {
-					return
-				}
+				for _, session := range allSessions {
+					if newCols == session.Term.Cols && newRows == session.Term.Rows {
+						continue
+					}
 
-				term.Resize(newCols, newRows)
+					session.Term.Resize(newCols, newRows)
 
-				_ = pty.Setsize(p, &pty.Winsize{
-					Rows: uint16(newRows),
-					Cols: uint16(newCols),
-				})
+					_ = pty.Setsize(session.PTY, &pty.Winsize{
+						Rows: uint16(newRows),
+						Cols: uint16(newCols),
+					})
+			}
 			})
 
 			resizeMu.Unlock()
 		},
 	}
 
+	tabs := container.NewDocTabs()
+
+	tabs.OnSelected = func(selected *container.TabItem) {
+		for _, s := range allSessions {
+			if s.Tab == selected {
+				activeSession = s
+				s.Term.isVisible = true
+				s.Term.isDirty = true
+			} else {
+				s.Term.isVisible = false
+			}
+		}
+	}
+
+	initialSession := createNewSession("shftty", cfg.Shell)
+	activeSession = initialSession
+	allSessions = append(allSessions, initialSession)
+	tabs.Append(initialSession.Tab)
+
+	// Create display container
+	t := container.New(tl, tabs)
+
+	windowShortcuts(w, activeSession)
+
 	// Callback function that handles special keypresses
 	onTypedKey := func(e *fyne.KeyEvent) {
+		if activeSession == nil { return }
+		p := activeSession.PTY
+
 		switch e.Name {
 				case fyne.KeyEnter, fyne.KeyReturn:
 					_, _ = p.Write([]byte{'\r'})
@@ -213,85 +300,13 @@ func main() {
 
 	// Callback function that handles character keypresses
 	onTypedRune := func(r rune) {
-		_, _ = p.WriteString(string(r))
+		if activeSession == nil { return }
+		_, _ = activeSession.PTY.WriteString(string(r))
 	}
 
 	w.Canvas().SetOnTypedKey(onTypedKey)
 	w.Canvas().SetOnTypedRune(onTypedRune)
 
-
-	windowShortcuts(w, p)
-
-	// buf reader for pty stream
-	reader := bufio.NewReader(p)
-
-	// Read & parse pty loop
-	go func() {
-		term.ReadPTY(reader, p)
-	}()
-
-	// Render loop
-	// TODO: need to add an isDirty catch to skip redrawing valid screens
-	// TODO: avoid re-allocating uiRows constantly
-
-	gridRows := make([]widget.TextGridRow, 0)
-
-	go func() {
-		for {
-			time.Sleep(16 * time.Millisecond)
-
-			term.mu.Lock()
-
-			if !term.isDirty {
-				term.mu.Unlock()
-				continue
-			}
-
-			// Resize rows slice if window resized
-			if len(gridRows) != term.Rows || (term.Rows > 0 && len(gridRows[0].Cells) != term.Cols) {
-				gridRows = make([]widget.TextGridRow, term.Rows)
-				for y := 0; y < term.Rows; y++ {
-					gridRows[y].Cells = make([]widget.TextGridCell, term.Cols)
-				}
-			}
-
-			// mutate cells
-			for y := 0; y < term.Rows; y++ {
-				for x := 0; x < term.Cols; x++ {
-					gridRows[y].Cells[x] = term.Grid[y][x]
-				}
-			}
-
-			// get cursor x,y and render cursor style 
-			if term.CursorHidden == false && term.CursorY >= 0 && term.CursorY < len(gridRows) {
-				if term.CursorX >= 0 && term.CursorX < term.Cols {
-					// get rune at cursor x,y
-					targetCell := gridRows[term.CursorY].Cells[term.CursorX]
-
-					// default to space if cell is empty
-					if targetCell.Rune == 0 {
-						targetCell.Rune = ' '
-					}
-
-					targetCell.Style = term.CursorStyle
-					gridRows[term.CursorY].Cells[term.CursorX] = targetCell
-				}
-			}
-
-			// reset dirty flag
-			term.isDirty = false
-			term.mu.Unlock()
-
-			fyne.Do(func() {
-				// Apply the rows directly to the TextGrid and refresh it
-				ui.Rows = gridRows
-				ui.Refresh()
-			})
-		}
-	}()
-
-	// Create display container
-	t := container.New(tl, ui)
 
 	// Set window content & run app
 	w.SetContent(t)

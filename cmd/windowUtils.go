@@ -1,14 +1,14 @@
 package main
 
 import (
-	"os"
 
 	// fyne dependencies
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/desktop"
 )
 
-func windowShortcuts(w fyne.Window, p *os.File) {
+func windowShortcuts(w fyne.Window, activeSession *Session) {
+	p := activeSession.PTY
 	// Register Crtl + Key shortcuts and write them to pty
 	// TODO: Implement Crtl + A-Z shortcuts
 	w.Canvas().AddShortcut(&desktop.CustomShortcut{

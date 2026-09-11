@@ -39,9 +39,35 @@ type Terminal struct {
 	inOSC        bool
 	inCharset    bool
 	isDirty      bool
+	isVisible	   bool
 	defaultStyle *widget.CustomTextGridStyle
 	currentStyle *widget.CustomTextGridStyle
   CursorStyle  *widget.CustomTextGridStyle
+}
+
+func defaultTerminal() *Terminal {
+
+	defaultStyle := &widget.CustomTextGridStyle{
+		FGColor: color.White,
+		BGColor: color.Transparent,
+	}
+
+	term := &Terminal{ 
+		CursorX: 0, 
+		CursorY: 0,
+		defaultStyle: defaultStyle,
+		currentStyle: defaultStyle,
+		CursorHidden: false,
+		MarginTop: 0,
+		MarginBottom: 0,
+		isVisible: true,
+		CursorStyle: &widget.CustomTextGridStyle{
+			FGColor: color.RGBA{128,128,128,1},
+			BGColor: color.White,
+		},
+	}
+
+	return term
 }
 
 func (t *Terminal) Resize(newCols, newRows int) {
