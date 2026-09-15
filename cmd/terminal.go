@@ -256,8 +256,8 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 				term.mu.Unlock()
 				continue
 			}
-			// If it's a number or semicolon, add it to our parameters
-			if (r >= '0' && r <= '9') || r == ';' || r == '>' || r == '=' {
+			// Add specific characters to our params list
+			if (r >= '0' && r <= '9') || r == ';' || r == '>' || r == '=' || r == ' '{
 				csiParams += string(r)
 				term.mu.Unlock()
 				continue
@@ -495,6 +495,11 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 						// Primary DA: Mimic VT102
 						_, _ = p.WriteString("\x1b[?6c")
 					}
+				// TODO: implement cursor shapes
+				case 'q':
+				// default logs missed sequences to the console for debugging
+				default: 
+					fmt.Printf("Missed sequence: %c", r)
 				}
 
 				term.isDirty = true
