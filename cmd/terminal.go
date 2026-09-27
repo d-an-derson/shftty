@@ -1,8 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"bufio"
+	"fmt"
 	"image/color"
 	"io"
 	"os"
@@ -12,16 +12,13 @@ import (
 
 	// fyne dependencies
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/widget"
-
 )
-
 
 // Terminal struct and interfaces
 type Terminal struct {
-	Grid         [][]widget.TextGridCell
-	MainGrid     [][]widget.TextGridCell
-	AltGrid      [][]widget.TextGridCell
+	Grid         [][]TerminalCell
+	MainGrid     [][]TerminalCell
+	AltGrid      [][]TerminalCell
 	Cols         int
 	Rows         int
 	MarginTop    int
@@ -39,9 +36,14 @@ type Terminal struct {
 	inOSC        bool
 	inCharset    bool
 	isDirty      bool
-	defaultStyle *widget.CustomTextGridStyle
-	currentStyle *widget.CustomTextGridStyle
-  CursorStyle  *widget.CustomTextGridStyle
+	CurFG        color.Color
+	CurBG        color.Color
+	CurBold      bool
+	CurItalic    bool
+	CurUnderline bool
+	CurInverse   bool
+	CursorStyle  *ExtendedGridStyle
+	CursorShape  int
 }
 
 func (t *Terminal) Resize(newCols, newRows int) {
@@ -52,11 +54,11 @@ func (t *Terminal) Resize(newCols, newRows int) {
 		return
 	}
 
-	newMain := make([][]widget.TextGridCell, newRows)
-	newAlt := make([][]widget.TextGridCell, newRows)
+	newMain := make([][]TerminalCell, newRows)
+	newAlt := make([][]TerminalCell, newRows)
 	for y := range newRows {
-		newMain[y] = make([]widget.TextGridCell, newCols)
-		newAlt[y] = make([]widget.TextGridCell, newCols)
+		newMain[y] = make([]TerminalCell, newCols)
+		newAlt[y] = make([]TerminalCell, newCols)
 		for x := range newCols {
 			if y < t.Rows && x < t.Cols {
 				if t.MainGrid != nil {
@@ -66,8 +68,8 @@ func (t *Terminal) Resize(newCols, newRows int) {
 					newAlt[y][x] = t.AltGrid[y][x]
 				}
 			} else {
-				newMain[y][x] = widget.TextGridCell{Rune: ' '}
-				newAlt[y][x] = widget.TextGridCell{Rune: ' '}
+				newMain[y][x] = TerminalCell{Rune: ' '}
+				newAlt[y][x] = TerminalCell{Rune: ' '}
 			}
 		}
 	}
@@ -97,9 +99,9 @@ func (t *Terminal) Scroll() {
 	for y := 1; y < t.Rows; y++ {
 		t.Grid[y-1] = t.Grid[y]
 	}
-	t.Grid[t.Rows-1] = make([]widget.TextGridCell, t.Cols)
+	t.Grid[t.Rows-1] = make([]TerminalCell, t.Cols)
 	for x := range t.Cols {
-		t.Grid[t.Rows-1][x] = widget.TextGridCell{Rune: ' '}
+		t.Grid[t.Rows-1][x] = TerminalCell{Rune: ' '}
 	}
 }
 
@@ -135,7 +137,7 @@ func (term *Terminal) MoveCursorRight(n int) {
 func (term *Terminal) ClearScreen() {
 	for y := 0; y < term.Rows; y++ {
 		for x := 0; x < term.Cols; x++ {
-			term.Grid[y][x] = widget.TextGridCell{Rune: ' ', Style: term.currentStyle}
+			term.Grid[y][x] = TerminalCell{Rune: ' '}
 		}
 	}
 
@@ -173,8 +175,8 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 			}
 
 			term.inEscape = true // escape sequence flag
-			term.inCSI = false // Control Sequence Introducer flag
-			term.inOSC = false // Operating System Command flag
+			term.inCSI = false   // Control Sequence Introducer flag
+			term.inOSC = false   // Operating System Command flag
 			term.isPrivate = false
 			term.inCharset = false
 			term.mu.Unlock()
@@ -238,7 +240,6 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 				term.CursorX, term.CursorY = 0, 0
 				term.MarginTop = 0
 				term.MarginBottom = term.Rows - 1
-				term.currentStyle = term.defaultStyle
 
 				term.ClearScreen()
 				term.isDirty = true
@@ -257,7 +258,7 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 				continue
 			}
 			// Add specific characters to our params list
-			if (r >= '0' && r <= '9') || r == ';' || r == '>' || r == '=' || r == ' '{
+			if (r >= '0' && r <= '9') || r == ';' || r == '>' || r == '=' || r == ' ' {
 				csiParams += string(r)
 				term.mu.Unlock()
 				continue
@@ -271,7 +272,8 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 					switch r {
 					case 'h': // Set mode
 						param := getCSIParam(csiParams, 0)
-						if param == 1049 {
+						switch param {
+						case 1049:
 							// save cursor position
 							term.SavedX, term.SavedY = term.CursorX, term.CursorY
 							// switch to alt grid
@@ -280,17 +282,18 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 							// clear alt grid
 							for y := 0; y < term.Rows; y++ {
 								for x := 0; x < term.Cols; x++ {
-									term.Grid[y][x] = widget.TextGridCell{Rune: ' '}
+									term.Grid[y][x] = TerminalCell{Rune: ' '}
 								}
 							}
 							term.CursorX, term.CursorY = 0, 0
 							term.isDirty = true
-						} else if param == 25 {
+						case 25:
 							term.CursorHidden = false
 						}
 					case 'l': // Reset mode
 						param := getCSIParam(csiParams, 0)
-						if param == 1049 {
+						switch param {
+						case 1049:
 							term.IsAlt = false
 							term.Grid = term.MainGrid
 							term.CursorX, term.CursorY = term.SavedX, term.SavedY
@@ -298,10 +301,9 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 							term.MarginTop = 0
 							term.MarginBottom = term.Rows - 1
 
-							term.currentStyle = term.defaultStyle
 							term.CursorHidden = false
 							term.isDirty = true
-						} else if param == 25 {
+						case 25:
 							term.CursorHidden = true
 						}
 					}
@@ -315,36 +317,64 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 
 				// Standard commands
 				switch r {
-				case 'm':
+case 'm':
+					// Implicit reset
+					if csiParams == "" {
+						term.CurFG = color.White
+						term.CurBG = color.Transparent
+						term.CurBold, term.CurItalic, term.CurUnderline, term.CurInverse = false, false, false, false
+						break
+					}
+
 					codes := strings.Split(csiParams, ";")
 					for i := 0; i < len(codes); i++ {
 						code, _ := strconv.Atoi(codes[i])
-						switch code {
-						case 0, 39, 49: // Reset
-							term.currentStyle = term.defaultStyle
-						case 31: // Red
-							term.currentStyle = &widget.CustomTextGridStyle{FGColor: color.RGBA{255, 0, 0, 255}}
-						case 32: // Green
-							term.currentStyle = &widget.CustomTextGridStyle{FGColor: color.RGBA{0, 255, 0, 255}}
-						case 33: // Yellow
-							term.currentStyle = &widget.CustomTextGridStyle{FGColor: color.RGBA{255, 255, 0, 255}}
-						case 34: // Blue
-							term.currentStyle = &widget.CustomTextGridStyle{FGColor: color.RGBA{0, 100, 255, 255}}
-						case 35: // Magenta
-							term.currentStyle = &widget.CustomTextGridStyle{FGColor: color.RGBA{255, 0, 255, 255}}
-						case 36: // Cyan
-							term.currentStyle = &widget.CustomTextGridStyle{FGColor: color.RGBA{0, 255, 255, 255}}
-						case 90: // Dark Gray
-							term.currentStyle = &widget.CustomTextGridStyle{FGColor: color.RGBA{128, 128, 128, 255}}
-						case 38: // 256-Color Foreground
-							if i+2 < len(codes) && codes[i+1] == "5" {
-								colorIndex, _ := strconv.Atoi(codes[i+2])
 
-								if colorIndex == 8 {
-									term.currentStyle = &widget.CustomTextGridStyle{FGColor: color.RGBA{128, 128, 128, 255}}
+						switch {
+						case code == 0, code == 39, code == 49: // Reset
+							term.CurFG = color.White
+							term.CurBG = color.Transparent
+							term.CurBold, term.CurItalic, term.CurUnderline, term.CurInverse = false, false, false, false
+						case code == 1:
+							term.CurBold = true
+						case code == 3:
+							term.CurItalic = true
+						case code == 4:
+							term.CurUnderline = true
+						case code == 7:
+							term.CurInverse = true
+						case code == 22:
+							term.CurBold = false
+						case code == 23:
+							term.CurItalic = false
+						case code == 24:
+							term.CurUnderline = false
+						case code == 27:
+							term.CurInverse = false
+						case code >= 30 && code <= 37:
+							term.CurFG = getANSIColor(code - 30)
+						case code >= 40 && code <= 47:
+							term.CurBG = getANSIColor(code - 40)
+						case code >= 90 && code <= 97:
+							term.CurFG = getANSIColor((code - 90) + 8)
+						case code >= 100 && code <= 107:
+							term.CurBG = getANSIColor((code - 100) + 8)
+						case code == 38, code == 48:
+							if i+1 < len(codes) {
+								mode, _ := strconv.Atoi(codes[i+1])
+								if mode == 5 && i+2 < len(codes) {
+									colorIndex, _ := strconv.Atoi(codes[i+2])
+									newColor := get256Color(colorIndex)
+									if code == 38 { term.CurFG = newColor } else { term.CurBG = newColor }
+									i += 2
+								} else if mode == 2 && i+4 < len(codes) {
+									r, _ := strconv.Atoi(codes[i+2])
+									g, _ := strconv.Atoi(codes[i+3])
+									b, _ := strconv.Atoi(codes[i+4])
+									newColor := color.RGBA{uint8(r), uint8(g), uint8(b), 255}
+									if code == 38 { term.CurFG = newColor } else { term.CurBG = newColor }
+									i += 4
 								}
-
-								i += 2
 							}
 						}
 					}
@@ -375,23 +405,39 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 					if term.CursorX >= term.Cols {
 						term.CursorX = term.Cols - 1
 					}
+				case 'E':
+					n := getCSIParam(csiParams, 1)
+					if term.CursorY+n <= term.Rows {
+						term.CursorY += n
+
+					} else {
+						term.CursorY = term.Rows
+					}
+				case 'F':
+					n := getCSIParam(csiParams, 1)
+					if term.CursorY-n >= 0 {
+						term.CursorY -= n
+
+					} else {
+						term.CursorY = 0
+					}
 				// Clear Display
 				case 'J':
 					n := getCSIParam(csiParams, 0)
-					// TODO: refactor to switch?
-					if n == 0 {
+					switch n {
+					case 0:
 						for x := term.CursorX; x < term.Cols; x++ {
-							term.Grid[term.CursorY][x] = widget.TextGridCell{Rune: ' '}
+							term.Grid[term.CursorY][x] = TerminalCell{Rune: ' '}
 						}
 						for y := term.CursorY + 1; y < term.Rows; y++ {
 							for x := range term.Cols {
-								term.Grid[y][x] = widget.TextGridCell{Rune: ' '}
+								term.Grid[y][x] = TerminalCell{Rune: ' '}
 							}
 						}
-					} else if n == 2 {
+						case 2:
 						for y := range term.Rows {
 							for x := range term.Cols {
-								term.Grid[y][x] = widget.TextGridCell{Rune: ' '}
+								term.Grid[y][x] = TerminalCell{Rune: ' '}
 							}
 						}
 					}
@@ -400,13 +446,16 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 					switch n {
 					case 0:
 						for x := term.CursorX; x < term.Cols; x++ {
-							term.Grid[term.CursorY][x] = widget.TextGridCell{Rune: ' '}
+							term.Grid[term.CursorY][x] = TerminalCell{Rune: ' '}
 						}
 					case 2:
 						for x := 0; x < term.Cols; x++ {
-							term.Grid[term.CursorY][x] = widget.TextGridCell{Rune: ' '}
+							term.Grid[term.CursorY][x] = TerminalCell{Rune: ' '}
 						}
 					}
+				case 'G':
+					n := getCSIParam(csiParams, 0)
+					term.CursorY = n - 1
 				case 'L': // Insert lines
 					n := getCSIParam(csiParams, 1)
 
@@ -418,13 +467,13 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 						break
 					}
 
-					for y := term.MarginBottom; y >= term.CursorY + n; y-- {
+					for y := term.MarginBottom; y >= term.CursorY+n; y-- {
 						copy(term.Grid[y], term.Grid[y-1])
 					}
 
-					for y := term.CursorY; y < term.CursorY + n; y++ {
+					for y := term.CursorY; y < term.CursorY+n; y++ {
 						for x := 0; x < term.Cols; x++ {
-							term.Grid[y][x] = widget.TextGridCell{Rune: ' ', Style: term.currentStyle}
+							term.Grid[y][x] = TerminalCell{Rune: ' '}
 						}
 					}
 				case 'M': // delete lines
@@ -439,21 +488,21 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 						break
 					}
 
-
-					for y := term.CursorY; y <= term.MarginBottom - n; y++ {
+					for y := term.CursorY; y <= term.MarginBottom-n; y++ {
 						copy(term.Grid[y], term.Grid[y+n])
 					}
 
 					for y := term.MarginBottom - n + 1; y <= term.MarginBottom; y++ {
 						for x := 0; x < term.Cols; x++ {
-							term.Grid[y][x] = widget.TextGridCell{Rune: ' ', Style: term.currentStyle}
+							term.Grid[y][x] = TerminalCell{Rune: ' '}
 						}
 					}
 				case 'n':
 					// Cursor Position Report (CSR)
-					param := getCSIParam(csiParams, 0) 
+					param := getCSIParam(csiParams, 0)
 
-					if param == 6 {
+					switch param {
+					case 6:
 						row := term.CursorY + 1
 						col := term.CursorX + 1
 
@@ -463,7 +512,7 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 						if err != nil {
 							fyne.LogError("Failed to write CSR back to PTY", err)
 						}
-					} else if param == 5 {
+					case 5:
 						_, err := p.WriteString("\x1b[0n")
 						if err != nil {
 							fyne.LogError("Failed to write DSR", err)
@@ -484,7 +533,7 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 					copy(term.Grid[term.CursorY][term.CursorX:], term.Grid[term.CursorY][term.CursorX+n:])
 
 					for x := (term.CursorX - n) + 1; x < term.Cols; x++ {
-						term.Grid[term.CursorY][x] = widget.TextGridCell{Rune: ' ', Style: term.currentStyle}
+						term.Grid[term.CursorY][x] = TerminalCell{Rune: ' '}
 					}
 				case 'c': // Device Attributes Request
 					if strings.HasPrefix(csiParams, ">") {
@@ -495,11 +544,18 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 						// Primary DA: Mimic VT102
 						_, _ = p.WriteString("\x1b[?6c")
 					}
-				// TODO: implement cursor shapes
 				case 'q':
+					if strings.HasSuffix(csiParams, " ") {
+						cleanParams := strings.TrimSpace(csiParams)
+						term.CursorShape = getCSIParam(cleanParams, 0)
+					}
+				case 'r':
+					margin := getCSIParam(csiParams, 1)
+					term.MarginTop = margin
+					term.MarginBottom = margin
 				// default logs missed sequences to the console for debugging
-				default: 
-					fmt.Printf("Missed sequence: %c", r)
+				default:
+					fmt.Printf("%c", r)
 				}
 
 				term.isDirty = true
@@ -527,6 +583,13 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 				term.Scroll()
 				term.CursorY = term.Rows - 1
 			}
+		} else if r == '\t' {
+			n := term.CursorX % 8
+			if term.CursorX+n <= term.Cols {
+				term.CursorX += n
+			} else {
+				term.CursorX = term.Cols
+			}
 		} else {
 			if term.CursorX >= term.Cols {
 				term.CursorX = 0
@@ -537,7 +600,15 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 				}
 			}
 
-			term.Grid[term.CursorY][term.CursorX] = widget.TextGridCell{Rune: r, Style: term.currentStyle}
+			term.Grid[term.CursorY][term.CursorX] = TerminalCell{
+				Rune: r,
+				FGColor:     term.CurFG,
+				BGColor:     term.CurBG,
+				Bold:        term.CurBold,
+				Italic:      term.CurItalic,
+				Underline:   term.CurUnderline,
+				Inverse:     term.CurInverse,
+			}
 			term.isDirty = true
 			term.CursorX++
 		}

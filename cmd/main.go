@@ -92,27 +92,21 @@ func main() {
 
 	w := a.NewWindow("shftty")
 
-	defaultStyle := &widget.CustomTextGridStyle{
-		FGColor: color.White,
-		BGColor: color.Transparent,
-	}
-
-	ui := widget.NewTextGrid() // Create a new TextGrid
 
 	// init terminal struct
 	term := &Terminal{ 
 		CursorX: 0, 
 		CursorY: 0,
-		defaultStyle: defaultStyle,
-		currentStyle: defaultStyle,
 		CursorHidden: false,
 		MarginTop: 0,
 		MarginBottom: 0,
-		CursorStyle: &widget.CustomTextGridStyle{
+		CursorStyle: &ExtendedGridStyle{
 			FGColor: color.RGBA{128,128,128,1},
 			BGColor: color.White,
 		},
 	}
+
+	ui := NewTerminalWidget(term) 
 
 	term.Resize(120, 44)
 
@@ -231,10 +225,6 @@ func main() {
 	}()
 
 	// Render loop
-	// TODO: need to add an isDirty catch to skip redrawing valid screens
-	// TODO: avoid re-allocating uiRows constantly
-
-	gridRows := make([]widget.TextGridRow, 0)
 
 	go func() {
 		for {
@@ -246,45 +236,11 @@ func main() {
 				term.mu.Unlock()
 				continue
 			}
-
-			// Resize rows slice if window resized
-			if len(gridRows) != term.Rows || (term.Rows > 0 && len(gridRows[0].Cells) != term.Cols) {
-				gridRows = make([]widget.TextGridRow, term.Rows)
-				for y := 0; y < term.Rows; y++ {
-					gridRows[y].Cells = make([]widget.TextGridCell, term.Cols)
-				}
-			}
-
-			// mutate cells
-			for y := 0; y < term.Rows; y++ {
-				for x := 0; x < term.Cols; x++ {
-					gridRows[y].Cells[x] = term.Grid[y][x]
-				}
-			}
-
-			// get cursor x,y and render cursor style 
-			if term.CursorHidden == false && term.CursorY >= 0 && term.CursorY < len(gridRows) {
-				if term.CursorX >= 0 && term.CursorX < term.Cols {
-					// get rune at cursor x,y
-					targetCell := gridRows[term.CursorY].Cells[term.CursorX]
-
-					// default to space if cell is empty
-					if targetCell.Rune == 0 {
-						targetCell.Rune = ' '
-					}
-
-					targetCell.Style = term.CursorStyle
-					gridRows[term.CursorY].Cells[term.CursorX] = targetCell
-				}
-			}
-
 			// reset dirty flag
 			term.isDirty = false
 			term.mu.Unlock()
 
 			fyne.Do(func() {
-				// Apply the rows directly to the TextGrid and refresh it
-				ui.Rows = gridRows
 				ui.Refresh()
 			})
 		}
