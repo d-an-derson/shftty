@@ -1,3 +1,4 @@
+// Not currently in use
 package main
 
 import (
