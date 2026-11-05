@@ -1,7 +1,16 @@
-shftty is a shitty fucking terminal emulator written in Go
+```
 
-![Shftty screenshot 1](./assets/shftty-screen1.png)
+     ____   _   _  _____  _____  _____ __   __
+    / ___| |_| |_||  ___||_   _||_   _|\ \ / /
+    \___ \ |  _  || |_     | |    | |   \ V / 
+     ___) || | | ||  _|    | |    | |    | |  
+    |____/ |_| |_||_|      |_|    |_|    |_|  
+      Sh*tty F*cking Terminal Emulator(tty)                                         
 
+```                                          
+
+
+![Shftty screenshot 1](./assets/shffty-main.png)
 
 ## What Works
 - 256 color support (kinda)
@@ -21,4 +30,6 @@ shftty is a shitty fucking terminal emulator written in Go
 
 ### TODO 
 - Implement the rest of the ANSI escape codes
+- Scrollback buffer
+- Kitty graphics (probably never gonna happen)
 - Fix everything else
