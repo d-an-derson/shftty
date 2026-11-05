@@ -21,6 +21,13 @@ import (
 	"github.com/creack/pty"
 )
 
+// var asciiLogo string = `
+//  ____   _   _  _____  _____  _____ __   __
+// / ___| |_| |_||  ___||_   _||_   _|\ \ / /
+// \___ \ |  _  || |_     | |    | |   \ V / 
+//  ___) || | | ||  _|    | |    | |    | |  
+// |____/ |_| |_||_|      |_|    |_|    |_|  
+//`
 
 // Theme struct and interfaces
 type fontTheme struct {
@@ -128,6 +135,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// kill the shell process on program exit
 	defer c.Process.Kill()
 
 
@@ -170,6 +178,9 @@ func main() {
 			resizeMu.Unlock()
 		},
 	}
+
+	// test PrintMsg function on startup
+	// term.PrintMsg("llong string for testing purposes. long string for testing purposes. long string for testing purposes. long string for testing purposes. long string for testing purposes. long string for testing purposes. ong string for testing purposes. ")
 
 	// Callback function that handles special keypresses
 	onTypedKey := func(e *fyne.KeyEvent) {

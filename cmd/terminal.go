@@ -143,6 +143,39 @@ func (term *Terminal) ClearScreen() {
 
 }
 
+// Print an arbitrary messsage to the terminal
+func (term *Terminal) PrintMsg(msg string) {
+	for x := 0; x < len(msg); x++ {
+		term.mu.Lock()
+		if msg[x] == '\n' {
+			term.Grid[term.CursorY][term.CursorX] = TerminalCell{Rune: rune(msg[x])}
+			term.CursorY++
+			term.CursorX = 0
+			term.isDirty = true
+			continue
+		} else {
+			if term.CursorX == term.Cols {
+				term.CursorY++
+				term.CursorX = 0
+				term.Grid[term.CursorY][term.CursorX] = TerminalCell{Rune: rune(msg[x])}
+				term.CursorX++
+			} else {
+				term.Grid[term.CursorY][term.CursorX] = TerminalCell{Rune: rune(msg[x])}
+				term.CursorX++
+				term.isDirty = true
+			}
+		}
+		term.mu.Unlock()
+		term.isDirty = true
+	}
+	term.Grid[term.CursorY][term.CursorX] = TerminalCell{Rune: ' '}
+	term.mu.Lock()
+	term.CursorX = 0
+	term.CursorY++
+	term.isDirty = true
+	term.mu.Unlock()
+}
+
 // Read PTY stream and process commands
 func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 	csiParams := "" // The numbers inside the sequence cmd "31;1"
@@ -317,7 +350,7 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 
 				// Standard commands
 				switch r {
-case 'm':
+				case 'm':
 					// Implicit reset
 					if csiParams == "" {
 						term.CurFG = color.White
@@ -600,6 +633,7 @@ case 'm':
 				}
 			}
 
+			// #TODO: abstract this out to helper fx
 			term.Grid[term.CursorY][term.CursorX] = TerminalCell{
 				Rune: r,
 				FGColor:     term.CurFG,
