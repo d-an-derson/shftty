@@ -44,6 +44,7 @@ type Terminal struct {
 	CurInverse   bool
 	CursorStyle  *ExtendedGridStyle
 	CursorShape  int
+	LineWrap     []bool // track hard vs soft line wraps
 }
 
 func (t *Terminal) Resize(newCols, newRows int) {
@@ -54,28 +55,128 @@ func (t *Terminal) Resize(newCols, newRows int) {
 		return
 	}
 
-	newMain := make([][]TerminalCell, newRows)
+	// resize alt grid
+	// simply crop/expand alt grid (no reflow)
 	newAlt := make([][]TerminalCell, newRows)
 	for y := range newRows {
-		newMain[y] = make([]TerminalCell, newCols)
 		newAlt[y] = make([]TerminalCell, newCols)
 		for x := range newCols {
 			if y < t.Rows && x < t.Cols {
-				if t.MainGrid != nil {
-					newMain[y][x] = t.MainGrid[y][x]
-				}
 				if t.AltGrid != nil {
 					newAlt[y][x] = t.AltGrid[y][x]
 				}
 			} else {
-				newMain[y][x] = TerminalCell{Rune: ' '}
 				newAlt[y][x] = TerminalCell{Rune: ' '}
 			}
 		}
 	}
 
-	t.MainGrid = newMain
+	// always reflow the main grid
+	// if alt grid is active when the window is resized
+	// we still reflow; ensuring the layout is correct when switching back
+	// to the main grid
+	var logicalLines [][]TerminalCell
+	var currentLine []TerminalCell
+
+	// track cursor position to move cursor as grid reflows
+	cursorLogicalLine := -1
+	cursorLogicalOffset := 0
+
+	for y := 0; y < t.Rows; y++ {
+		if t.MainGrid == nil || t.LineWrap == nil {
+			break
+		}
+
+		lastChar := t.Cols - 1
+		for lastChar >= 0 && t.MainGrid[y][lastChar].Rune == 0 {
+			lastChar--
+		}
+
+		// extend lastChar to include cursor if cursor is beyond lastChar
+		if !t.IsAlt && y == t.CursorY && t.CursorX > lastChar {
+			lastChar = t.CursorX
+		}
+
+		// save 1D index of cursor
+		if !t.IsAlt && y == t.CursorY {
+			cursorLogicalLine = len(logicalLines)
+			cursorLogicalOffset = len(currentLine) + t.CursorX
+		}
+
+		if lastChar >= 0 {
+			currentLine = append(currentLine, t.MainGrid[y][:lastChar+1]...)
+		}
+
+		if !t.LineWrap[y] || y == t.Rows - 1 {
+			logicalLines = append(logicalLines, currentLine)
+			currentLine = nil
+		}
+	}
+
+	var newGrid [][]TerminalCell
+	var newWrapped []bool
+	var cursorNewY_unanchored int
+
+	for llIdx, ll := range logicalLines {
+		// calculate cursor row in new grid
+		if llIdx == cursorLogicalLine {
+			cursorNewY_unanchored = len(newGrid) + (cursorLogicalOffset / newCols)
+		}
+		if len(ll) == 0 {
+			newGrid = append(newGrid, make([]TerminalCell, newCols))
+			newWrapped = append(newWrapped, false)
+			continue
+		}
+
+		for i := 0; i < len(ll); i += newCols {
+			end := i + newCols
+			isWrapped := true
+			if end >= len(ll) {
+				end = len(ll)
+				isWrapped = false
+			}
+
+			row := make([]TerminalCell, newCols)
+			copy(row, ll[i:end])
+			newGrid = append(newGrid, row)
+			newWrapped = append(newWrapped, isWrapped)
+		}
+	}
+
+	finalGrid := make([][]TerminalCell, newRows)
+	finalWrapped := make([]bool, newRows)
+	for y := range newRows {
+		finalGrid[y] = make([]TerminalCell, newCols)
+	}
+
+	startY := newRows - len(newGrid)
+	gridOffset := 0
+	if startY < 0 {
+		gridOffset = -startY
+		startY = 0
+	}
+
+	for y := startY; y < newRows; y++ {
+		finalGrid[y] = newGrid[gridOffset]
+		finalWrapped[y] = newWrapped[gridOffset]
+		gridOffset++
+	}
+
+	// apply new coordinates to cursor
+	if !t.IsAlt && cursorLogicalLine != -1 {
+		t.CursorX = cursorLogicalOffset % newCols
+
+		if len(newGrid) < newRows {
+			t.CursorY = startY + cursorNewY_unanchored
+		} else {
+			t.CursorY = cursorNewY_unanchored - gridOffset
+		}
+	}
+
+	t.MainGrid = finalGrid
 	t.AltGrid = newAlt
+	t.LineWrap = finalWrapped
+	t.Grid = t.MainGrid
 	t.Cols = newCols
 	t.Rows = newRows
 	t.MarginBottom = t.Rows - 1
@@ -92,14 +193,22 @@ func (t *Terminal) Resize(newCols, newRows int) {
 	if t.CursorY >= t.Rows {
 		t.CursorY = t.Rows - 1
 	}
+	if t.CursorX < 0 {
+		t.CursorX = 0
+	}
+	if t.CursorY < 0 {
+		t.CursorY = 0
+	}
 }
 
 // Scroll terminal
 func (t *Terminal) Scroll() {
 	for y := 1; y < t.Rows; y++ {
 		t.Grid[y-1] = t.Grid[y]
+		t.LineWrap[y-1] = t.LineWrap[y]
 	}
 	t.Grid[t.Rows-1] = make([]TerminalCell, t.Cols)
+	t.LineWrap[t.Rows-1] = false
 	for x := range t.Cols {
 		t.Grid[t.Rows-1][x] = TerminalCell{Rune: ' '}
 	}
@@ -611,6 +720,7 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 		} else if r == '\r' {
 			term.CursorX = 0
 		} else if r == '\n' {
+			term.LineWrap[term.CursorY] = false
 			term.CursorY++
 			if term.CursorY >= term.Rows {
 				term.Scroll()
@@ -625,6 +735,7 @@ func (term *Terminal) ReadPTY(reader *bufio.Reader, p *os.File) {
 			}
 		} else {
 			if term.CursorX >= term.Cols {
+				term.LineWrap[term.CursorY] = true
 				term.CursorX = 0
 				term.CursorY++
 				if term.CursorY >= term.Rows {
